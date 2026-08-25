@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Green Flask - Alive</title>
+<!--
+  THE GREEN FLASK - ALIVE
+  The embroidered flask as a single endless living scene. Every system runs
+  on its own independent cycle, so the loop never visibly repeats:
+
+  - bubbles are born in the swirl, rise and wobble through the liquid, pop
+    in a small flash at the meniscus - and every third one escapes up the
+    neck to drift off above the rim
+  - the bubble cluster above the rim perpetually rises and renews around a
+    breathing mother bubble with a slowly turning phyllotaxis iris
+  - sap pulses run continuously from the liquid up the vines to the leaves
+  - a gusting wind sways the vines and leaves (never perfectly periodic)
+  - the swirl stirs, the meniscus sloshes, light bands travel the liquid,
+    satin glints sweep the leaves, spores drift upward, and every ~11s a
+    bead of condensation slides down the glass
+
+  Interactions: click/tap or Space = STIR (the swirl spins up, bubbles
+  rush, the surface sloshes, the vines rustle - then it all settles).
+  R = reassemble from scatter.
+
+  Self-contained, no dependencies. Respects prefers-reduced-motion
+  (static flask). Tuning: CFG at the top of the engine script (caption).
+  Embed as a full-page hero via iframe, or inline the scripts + canvas.
+-->
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #060906; }
+  #c { position: fixed; inset: 0; display: block; cursor: pointer; }
+  #controls { position: fixed; right: 16px; bottom: 14px; display: flex; gap: 8px; z-index: 2; }
+  #controls button {
+    width: 34px; height: 34px; border-radius: 50%;
+    border: 1px solid rgba(150, 186, 96, .45); background: rgba(8, 12, 8, .25);
+    color: rgba(190, 214, 120, .85); font: 400 15px/1 system-ui; cursor: pointer;
+    transition: border-color .2s, color .2s;
+  }
+  #controls button:hover { border-color: rgba(200, 224, 130, .9); color: #dcebae; }
+  #controls button:focus-visible { outline: 2px solid #b5cc5e; outline-offset: 2px; }
+  #caption {
+    position: fixed; left: 0; right: 0; bottom: 18px; text-align: center; z-index: 1;
+    font: 400 13px/1 "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    letter-spacing: .42em; text-indent: .42em; color: rgba(160, 190, 100, .7);
+    pointer-events: none; text-transform: uppercase;
+  }
+</style>
+</head>
+<body>
+<canvas id="c" title="Click to stir - restart (R)"></canvas>
+<p id="caption" hidden></p>
+<div id="controls">
+  <button id="restartBtn" aria-label="Restart" title="Restart (R)">&#10227;</button>
+</div>
+<script>
+/* The Green Flask — scene geometry.
+   Act I/IV: the embroidered flask. Act II: growth mathematics + cell lattice.
+   Act III: a swaying L-system plant. The bubble cluster above the rim is the
+   thread that stays bright through every act. */
+(function (root) {
+  const W = 1180, H = 1000, TAU = Math.PI * 2;
+  function hash(n) { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); }
+
+  /* layers, ascending draw order */
+  const FL = { LIQ: 0, SWIRL: 1, BUBIN: 2, MEN: 3, INNER: 4, OUT: 5, STEM: 6, LEAF: 7, TBUB: 8 };
+
+  /* ---------- helpers ---------- */
+  function mkEmit(layer, out) {
+    let idx = 0;
+    const push = (x, y, o) => { out.push(Object.assign({ x, y, l: layer, s: idx, u: 0, h: hash(layer * 7919 + idx * 13.7), ax: 0, ay: 0, ar: 0, d: 0, bp: 0 }, o)); idx++; };
+    return {
+      push,
+      line(x1, y1, x2, y2, sp, o) {
+        const n = Math.max(2, Math.round(Math.hypot(x2 - x1, y2 - y1) / sp));
+        for (let i = 0; i <= n; i++) push(x1 + (x2 - x1) * i / n, y1 + (y2 - y1) * i / n, o);
+      },
+      ring(cx, cy, r, sp, o) {
+        const n = Math.max(6, Math.round(TAU * r / sp));
+        for (let i = 0; i < n; i++) {
+          const a = (i / n) * TAU;
+          push(cx + r * Math.cos(a), cy + r * Math.sin(a), Object.assign({ ax: cx, ay: cy, ar: r, u: a }, o));
+        }
+      },
+      fin(out2) {
+        const mine = out2.filter(p => p.l === layer), n = Math.max(1, mine.length - 1);
+        mine.forEach((p, i) => p.s = i / n);
+      }
+    };
+  }
+  /* quadratic chain: segs [[cx,cy,x,y],...] from (x0,y0); calls cb(x,y,uCum,tx,ty) */
+  function qchain(x0, y0, segs, sp, cb) {
+    let px = x0, py = y0, u = 0;
+    for (const [cx, cy, x1, y1] of segs) {
+      const approx = Math.hypot(cx - px, cy - py) + Math.hypot(x1 - cx, y1 - cy);
+      const n = Math.max(3, Math.round(approx / sp));
+      for (let i = 1; i <= n; i++) {
+        const t = i / n, mt = 1 - t;
+        const x = mt * mt * px + 2 * mt * t * cx + t * t * x1;
+        const y = mt * mt * py + 2 * mt * t * cy + t * t * y1;
+        u += Math.hypot(x - (cb.lx ?? px), y - (cb.ly ?? py)) * 0 + approx / n; // arc-ish
+        cb(x, y, u);
+      }
+      px = x1; py = y1;
+    }
+    return u;
+  }
+
+  /* heart/ivy leaf: outline (u=0), veins (u=1), stipple (u=2) */
+  function leaf(emit, cx, cy, sc, rot, bp, dSway) {
+    const co = Math.cos(rot), sn = Math.sin(rot);
+    const put = (lx, ly, part) => {
+      emit.push(cx + (lx * co - ly * sn) * sc, cy + (lx * sn + ly * co) * sc,
+                { u: part, bp, d: dSway });
+    };
+    const hw = t => 0.42 * Math.sin(Math.PI * Math.pow(t, 0.75)) * Math.pow(1 - t, 0.15);
+    for (let sgn = -1; sgn <= 1; sgn += 2)                       // outline
+      for (let i = 0; i <= 46; i++) { const t = 0.03 + 0.97 * i / 46; put(t, sgn * hw(t), 0); }
+    for (let i = 0; i <= 9; i++) {                               // base notch
+      const t = i / 9, a = Math.PI / 2 + t * Math.PI;
+      put(0.03 + 0.09 * Math.cos(a) - 0.06, hw(0.03) * Math.cos(t * Math.PI), 0);
+    }
+    for (let i = 0; i <= 26; i++) { const t = i / 26; put(t, 0.03 * Math.sin(Math.PI * t), 1); }  // midrib
+    for (const tb of [0.22, 0.42, 0.62])                         // side veins
+      for (let sgn = -1; sgn <= 1; sgn += 2)
+        for (let i = 1; i <= 8; i++) {
+          const q = i / 8;
+          put(tb + q * 0.17, sgn * q * hw(tb + q * 0.17) * 0.8, 1);
+        }
+    for (let t = 0.08; t < 0.97; t += 0.085)                     // stipple
+      for (let yy = -1; yy <= 1; yy += 0.24) {
+        const w = hw(t) * 0.82;
+        if (Math.abs(yy) * 0.45 < w && hash(t * 91 + yy * 57 + bp) > 0.45) put(t, yy * 0.45, 2);
+      }
+  }
+
+  /* ---------- ACT I / IV: the flask ---------- */
+  function buildFlask() {
+    const pts = [];
+
+    /* liquid rows (two tones by depth), clipped to the inner silhouette */
+    {
+      const e = mkEmit(FL.LIQ, pts);
+      const xl = y => {
+        if (y < 392) return 527;
+        if (y < 456) return 527 + (y - 392) / 64 * (505 - 527);
+        if (y < 706) return 505 - 0.552 * (y - 456);
+        if (y < 740) return 367 - (y - 706) / 34 * 15;
+        if (y < 758) return 352 + (y - 740) / 18 * 40;
+        return 392 + (y - 758) / 6 * 38;
+      };
+      for (let y = 312; y <= 762; y += 13) {
+        const a = xl(y), b = 1180 - a;
+        const n = Math.max(2, Math.round((b - a) / 5));
+        for (let i = 0; i <= n; i++)
+          e.push(a + (b - a) * i / n, y + (hash(y * 3 + i) - 0.5) * 2.4, { u: y < 560 ? 0 : 1 });
+      }
+      e.fin(pts);
+    }
+
+    /* swirl motif: two curls + wave crest + underline */
+    {
+      const e = mkEmit(FL.SWIRL, pts);
+      const curl = (cx, cy, r0, r1, turns, flip) => {
+        const n = Math.round(turns * 150);
+        for (let i = 0; i <= n; i++) {
+          const q = i / n, th = flip * q * turns * TAU - Math.PI / 2;
+          const r = r0 + (r1 - r0) * q;
+          e.push(cx + r * Math.cos(th), cy + r * Math.sin(th), { ax: cx, ay: cy, ar: r, u: th });
+        }
+      };
+      curl(478, 652, 12, 86, 1.55, 1);
+      curl(652, 664, 10, 64, 1.35, 1);
+      qchain(498, 590, [[575, 545, 640, 585], [672, 608, 664, 640]], 2, (x, y) => e.push(x, y, {}));
+      qchain(690, 726, [[740, 734, 792, 726]], 2, (x, y) => e.push(x, y, {}));
+      e.fin(pts);
+    }
+
+    /* bubbles + specks inside the liquid, tiny leaf in the neck */
+    {
+      const e = mkEmit(FL.BUBIN, pts);
+      const rings = [[395, 600, 9], [422, 700, 7], [360, 660, 6], [500, 732, 8], [560, 702, 6],
+                     [622, 608, 8], [700, 640, 9], [730, 700, 7], [762, 600, 6], [660, 732, 5],
+                     [432, 560, 5], [640, 558, 6], [330, 706, 5], [798, 688, 6], [560, 482, 4], [612, 432, 3]];
+      for (const [x, y, r] of rings) e.ring(x, y, r, 1.6, {});
+      for (let i = 0; i < 26; i++)
+        e.push(360 + hash(i * 3.1) * 460, 540 + hash(i * 7.7 + 2) * 220, {});
+      leaf(e, 578, 452, 34, 1.9, 0.4, 0);
+      e.fin(pts);
+    }
+
+    /* meniscus */
+    {
+      const e = mkEmit(FL.MEN, pts);
+      e.line(523, 298, 657, 298, 2.2, {});
+      e.line(542, 306, 638, 306, 2.6, {});
+      e.fin(pts);
+    }
+
+    /* inner + outer outlines (mirrored quad chains) */
+    function outlinePath(e, inset) {
+      const i = inset;
+      const left = [
+        [512 + i, 300, 514 + i, 392],
+        [514 + i, 424, 492 + i * 1.4, 462 - i * 0.5],
+        [420, 590, 352 + i * 1.2, 714 - i],
+        [330 + i * 1.6, 754 - i, 372 + i, 772 - i],
+        [470, 788 - i, 590, 788 - i]
+      ];
+      const start = [504 + i, 132 + i];
+      const pushPt = (x, y) => e.push(x, y, {});
+      qchain(start[0], start[1], left, 2.2, pushPt);
+      const right = left.map(([cx, cy, x, y]) => [1180 - cx, cy, 1180 - x, y]).reverse()
+        .map(([cx, cy, x, y], k, arr) => k < arr.length - 1
+          ? [cx, cy, arr[k + 1][2] === undefined ? x : x, y] : [cx, cy, x, y]);
+      /* mirror: walk from bottom-centre up the right side */
+      let px = 590, py = 788 - i;
+      for (let k = left.length - 1; k >= 0; k--) {
+        const [cx, cy, x, y] = left[k];
+        const sx = k > 0 ? left[k - 1][2] : start[0], sy = k > 0 ? left[k - 1][3] : start[1];
+        qchain(px, py, [[1180 - cx, cy, 1180 - sx, sy]], 2.2, pushPt);
+        px = 1180 - sx; py = sy;
+      }
+      e.line(1180 - start[0], start[1], start[0], start[1], 2.2, {});       // rim
+      e.line(516 + i, 148 + i * 0.6, 664 - i, 148 + i * 0.6, 2.4, {});      // rim band
+    }
+    { const e = mkEmit(FL.INNER, pts); outlinePath(e, 13); e.fin(pts); }
+    { const e = mkEmit(FL.OUT, pts); outlinePath(e, 0); e.fin(pts); }
+
+    /* stems: inside the flask (no sway) then out into the air (sway ramps) */
+    {
+      const e = mkEmit(FL.STEM, pts);
+      let uAll = 0;
+      const stem = (x0, y0, segs, dRampFrom, bp, sp) => {
+        let uLoc = 0;
+        const total = qchain(x0, y0, segs, 1, () => {});               // measure
+        qchain(x0, y0, segs, sp || 2.1, (x, y, u) => {
+          uLoc = u;
+          const d = dRampFrom < 0 ? 0 : Math.max(0, (u - dRampFrom) / Math.max(1, total - dRampFrom));
+          e.push(x, y, { u: uAll + u, d, bp });
+        });
+        uAll += uLoc + 40;
+      };
+      stem(540, 610, [[560, 540, 570, 470], [578, 400, 572, 320], [566, 250, 552, 205],
+                      [520, 165, 462, 168], [398, 176, 352, 232], [312, 286, 300, 352],
+                      [288, 420, 262, 462]], 470, 0.15);
+      stem(352, 232, [[330, 262, 324, 284]], 0, 0.35);
+      stem(300, 352, [[240, 352, 196, 332], [160, 318, 138, 342]], 0, 0.55, 2.6);
+      stem(462, 168, [[392, 122, 322, 122]], 0, 0.75, 2.6);
+      stem(640, 615, [[618, 540, 612, 470], [606, 400, 612, 320], [618, 250, 630, 205],
+                      [660, 168, 704, 162], [760, 158, 792, 206], [824, 258, 812, 330],
+                      [800, 402, 772, 452]], 460, 0.9);
+      stem(704, 162, [[680, 140, 658, 124]], 0, 0.28);
+      stem(612, 330, [[620, 326, 626, 324]], 0, 0.5);
+      stem(772, 452, [[840, 470, 890, 504], [928, 530, 946, 566]], 0, 0.68, 2.6);
+      stem(792, 206, [[848, 172, 898, 150]], 0, 0.44, 2.6);
+      e.fin(pts);
+    }
+
+    /* leaves */
+    {
+      const e = mkEmit(FL.LEAF, pts);
+      leaf(e, 262, 462, 96, 2.55, 0.12, 0.85);   // big left, pointing down-left
+      leaf(e, 324, 284, 62, 3.95, 0.31, 0.6);    // mid left, up-left
+      leaf(e, 322, 122, 40, 3.35, 0.47, 0.75);   // small upper-left
+      leaf(e, 772, 452, 98, 0.62, 0.58, 0.85);   // big right, down-right
+      leaf(e, 704, 158, 68, -0.85, 0.71, 0.6);   // top right, up-right
+      leaf(e, 628, 322, 42, -0.25, 0.83, 0.45);  // small mid right
+      leaf(e, 656, 122, 34, -1.25, 0.92, 0.7);   // tiny top
+      e.fin(pts);
+    }
+
+    /* thread: the bubble cluster above the rim (big one gets a phyllotaxis iris) */
+    {
+      const e = mkEmit(FL.TBUB, pts);
+      e.ring(455, 80, 17, 1.25, { bp: 0.1 });
+      const GA = Math.PI * (3 - Math.sqrt(5));
+      for (let n = 1; n <= 250; n++) {
+        const r = 0.92 * Math.sqrt(n), a = n * GA;
+        e.push(455 + r * Math.cos(a), 80 + r * Math.sin(a), { ax: 455, ay: 80, ar: r, u: a, bp: 0.1 });
+      }
+      const small = [[525, 55, 10], [497, 112, 9], [560, 95, 7], [475, 38, 6], [543, 25, 5], [600, 60, 6], [590, 105, 5]];
+      small.forEach(([x, y, r], k) => e.ring(x, y, r, 1.25, { bp: 0.2 + k * 0.1 }));
+      e.fin(pts);
+    }
+
+    for (const p of pts) { p.y += 85; if (p.ar) p.ay += 85; }
+    return pts;
+  }
+
+  /* ---------- ACT II: growth mathematics + hex lattice ---------- */
+  const MATH_ITEMS = [
+    { t: 'dN/dt = rN(1 \u2212 N/K)', x: 245, y: 165, s: 31, r: -0.04 },
+    { t: 'N = N\u2080\u00B7e^(rt)', x: 745, y: 140, s: 33, r: 0.03 },
+    { t: '\u2202u/\u2202t = D\u2207\u00B2u + f(u,v)', x: 250, y: 420, s: 30, r: 0.02 },
+    { t: 'F \u2192 F[+F]F[\u2212F]F', x: 680, y: 395, s: 30, r: -0.03 },
+    { t: '6CO\u2082 + 6H\u2082O \u2192 C\u2086H\u2081\u2082O\u2086 + 6O\u2082', x: 320, y: 655, s: 25, r: 0.02 },
+    { t: 'F\u2099 = F\u2099\u208B\u2081 + F\u2099\u208B\u2082', x: 790, y: 630, s: 30, r: -0.02 },
+    { t: '\u03C6 = (1+\u221A5)/2', x: 420, y: 850, s: 30, r: 0.02 },
+    { t: '\u2207', x: 960, y: 300, s: 84, r: 0.05 }
+  ];
+  const THREAD_ITEM = { t: '137.5\u00B0', x: 855, y: 830, s: 88, r: -0.03 };
+
+  function buildHex() {
+    const out = [], a = 58, dx = 1.5 * a, dy = Math.sqrt(3) * a;
+    let id = 0;
+    for (let col = -1; col * dx < W + dx; col++)
+      for (let row = -1; row * dy < H + dy; row++) {
+        if ((col + row) % 2) continue;                              // checker
+        const cx = col * dx, cy = row * dy + (col % 2 ? dy / 2 : 0);
+        id++;
+        for (let e6 = 0; e6 < 6; e6++) {
+          const a1 = e6 * TAU / 6, a2 = (e6 + 1) * TAU / 6;
+          for (let i = 0; i < 7; i++) {
+            const t = i / 7;
+            const px = cx + a * Math.cos(a1) * (1 - t) + a * Math.cos(a2) * t;
+            const py = cy + a * Math.sin(a1) * (1 - t) + a * Math.sin(a2) * t;
+            out.push({ x: px, y: py, ax: cx, ay: cy, hid: hash(id * 17.3) });
+          }
+        }
+      }
+    return out;
+  }
+
+  /* ---------- ACT III: the plant ---------- */
+  function buildPlant() {
+    const body = [], tips = [];
+    let maxLen = 1;
+    const seg = (x, y, ang, len, depth, u0, bp) => {
+      const n = Math.max(3, Math.round(len / 5));
+      let px = x, py = y, a = ang;
+      for (let i = 1; i <= n; i++) {
+        a += (hash(bp * 91 + i) - 0.5) * 0.06;
+        const nx = px + Math.cos(a) * (len / n), ny = py + Math.sin(a) * (len / n);
+        const u = u0 + (i / n) * len;
+        body.push({ x: nx, y: ny, part: 0, d: u, bp, h: hash(bp * 53 + i * 7.7) });
+        maxLen = Math.max(maxLen, u);
+        px = nx; py = ny;
+      }
+      return [px, py, a, u0 + len];
+    };
+    (function grow(x, y, ang, len, depth, u0, id) {
+      const bp = hash(id * 13.7);
+      const [ex, ey, ea, u1] = seg(x, y, ang, len, depth, u0, bp);
+      if (depth >= 4 || len < 26) { tips.push({ x: ex, y: ey, ang: ea, u: u1, id }); return; }
+      const kids = 2 + (hash(id * 31.1) > 0.6 ? 1 : 0);
+      for (let c = 0; c < kids; c++) {
+        const spread = 0.34 + 0.34 * hash(id * 7 + c * 3);
+        const na = ea + (c === 0 ? -spread : c === 1 ? spread : (hash(id + c) - 0.5) * 0.3);
+        grow(ex, ey, na, len * (0.6 + 0.14 * hash(id * 5 + c)), depth + 1, u1, id * 3 + c + 1);
+      }
+    })(590, 868, -Math.PI / 2, 205, 0, 0, 1);
+
+    body.forEach(p => p.d /= maxLen);
+    tips.sort((a, b) => a.y - b.y);
+
+    /* leaves + tendrils on tips (skip the top tip: it takes the flower) */
+    tips.slice(1).forEach((tp, k) => {
+      const bp = hash(k * 91.3), d = tp.u / maxLen;
+      if (k % 3 === 2) {                                            // tendril curl
+        for (let i = 0; i <= 60; i++) {
+          const q = i / 60, th = tp.ang + q * 3.4 * (k % 2 ? 1 : -1);
+          const r = 36 * (1 - q * 0.85);
+          body.push({ x: tp.x + Math.cos(th) * r * q * 3.0, y: tp.y + Math.sin(th) * r * q * 3.0,
+                      part: 2, d, bp, h: hash(k * 7 + i) });
+        }
+      } else {
+        const sc = 30 + 26 * hash(k * 3.7);
+        const co = Math.cos(tp.ang), sn = Math.sin(tp.ang);
+        const hw = t => 0.42 * Math.sin(Math.PI * Math.pow(t, 0.75)) * Math.pow(1 - t, 0.15);
+        for (let sgn = -1; sgn <= 1; sgn += 2)
+          for (let i = 0; i <= 30; i++) {
+            const t = 0.05 + 0.95 * i / 30, ly = sgn * hw(t);
+            body.push({ x: tp.x + (t * co - ly * sn) * sc, y: tp.y + (t * sn + ly * co) * sc,
+                        part: 1, d, bp, h: hash(k * 11 + i * 3 + sgn) });
+          }
+      }
+    });
+    for (let i = 0; i < 240; i++) {                                 // soil mound
+      const a = hash(i * 3.3) * TAU, r = Math.sqrt(hash(i * 7.1)) ;
+      body.push({ x: 590 + Math.cos(a) * 150 * r, y: 878 + Math.sin(a) * 22 * r,
+                  part: 3, d: 0, bp: 0, h: hash(i * 5.9) });
+    }
+
+    /* thread: crown flower at the top tip + buds on the next four */
+    const thread = [];
+    const top = tips[0] || { x: 590, y: 260 };
+    const GA = Math.PI * (3 - Math.sqrt(5));
+    for (let n = 1; n <= 300; n++) {
+      const r = 2.1 * Math.sqrt(n), a = n * GA;
+      thread.push({ x: top.x + r * Math.cos(a), y: top.y + r * Math.sin(a),
+                    part: 4, d: 1, bp: 0, u: a, h: hash(n * 3.7) });
+    }
+    tips.slice(1, 5).forEach((tp, k) => {
+      for (let i = 0; i < 40; i++) {
+        const a = (i / 40) * TAU;
+        thread.push({ x: tp.x + 7 * Math.cos(a), y: tp.y + 7 * Math.sin(a),
+                      part: 5, d: tp.u / maxLen, bp: 0.3 + k * 0.2, u: a, h: hash(k * 17 + i) });
+      }
+    });
+    return { body, thread };
+  }
+
+  const api = { buildFlask, buildPlant, buildHex, MATH_ITEMS, THREAD_ITEM, leaf, hash, W, H, FL };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else root.Flora = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>
+/* The Green Flask — Alive. A single endless scene.
+   Everything breathes on independent cycles so the loop never visibly repeats:
+   bubbles are born in the swirl, rise, pop at the meniscus or escape the neck;
+   sap pulses run the vines; wind gusts move the leaves; the swirl stirs;
+   condensation drips down the glass. Click to stir it up. */
+(function () {
+  const F = window.Flora;
+  const CFG = { caption: '' };
+  const W = F.W, H = F.H, FL = F.FL, TAU = Math.PI * 2;
+
+  const pool = F.buildFlask();
+  const N = pool.length;
+  const pX = new Float32Array(N), pY = new Float32Array(N), pL = new Uint8Array(N);
+  const pU = new Float32Array(N), pD = new Float32Array(N), pB = new Float32Array(N);
+  const pAx = new Float32Array(N), pAy = new Float32Array(N), pAr = new Float32Array(N);
+  const hA = new Float32Array(N);
+  let uStemMax = 1;
+  pool.forEach((p, i) => {
+    pX[i] = p.x; pY[i] = p.y; pL[i] = p.l; pU[i] = p.u; pD[i] = p.d; pB[i] = p.bp;
+    pAx[i] = p.ax; pAy[i] = p.ay; pAr[i] = p.ar; hA[i] = p.h;
+    if (p.l === FL.STEM) uStemMax = Math.max(uStemMax, p.u);
+  });
+  const sX = new Float32Array(N), sY = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    sX[i] = 60 + F.hash(i * 3.3) * (W - 120);
+    sY[i] = 60 + F.hash(i * 7.7 + 1) * (H - 120);
+  }
+  /* leaf anchors for drifting spores */
+  const LEAVES = [[262, 547], [324, 369], [322, 207], [772, 537], [704, 243], [628, 407], [656, 207]];
+
+  const DKG = [66, 100, 58], OLIVE = [122, 156, 70], BRT = [168, 194, 86];
+  const PALE = [214, 227, 154], HOTG = [236, 246, 198], MIDG = [104, 138, 66];
+  const mixC = (A, B, m) => [A[0] + (B[0] - A[0]) * m, A[1] + (B[1] - A[1]) * m, A[2] + (B[2] - A[2]) * m];
+
+  const cv = document.getElementById('c');
+  const ctx = cv.getContext('2d');
+  const reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let k = 1, ox = 0, oy = 0, dpr = 1;
+  let t0 = performance.now() / 1000, tPrev = 0;
+  let E = 0, swirlPh = 0, sloshPh = 0, sapPh = 0;
+  let liqStride = 1, emaDt = 16, frames = 0;
+
+  function resize() {
+    dpr = Math.min(2, window.devicePixelRatio || 1);
+    const cw = window.innerWidth, ch = window.innerHeight;
+    cv.width = cw * dpr; cv.height = ch * dpr;
+    cv.style.width = cw + 'px'; cv.style.height = ch + 'px';
+    k = Math.min(cw / W, ch / H) * 0.94;
+    ox = (cw - W * k) / 2; oy = (ch - H * k) / 2;
+    if (reduced) frame(true);
+  }
+  const sm = a => a * a * (3 - 2 * a);
+  const c01 = a => a < 0 ? 0 : a > 1 ? 1 : a;
+  const mix = (a, b, m) => a + (b - a) * m;
+  const fract = a => a - Math.floor(a);
+
+  function frame(once) {
+    const now = performance.now() / 1000;
+    const tAbs = now - t0;
+    const t = reduced ? 0.8 : now;
+    const dt = Math.min(0.05, Math.max(0.001, tAbs - tPrev)); tPrev = tAbs;
+
+    if (!reduced) {
+      E *= Math.exp(-dt * 1.1);
+      swirlPh += dt * (0.35 + 2.2 * E);
+      sloshPh += dt * (2.2 + 6 * E);
+      sapPh += dt * 240 * (1 + 0.8 * E);
+    }
+    const gust = 0.5 + 0.5 * Math.sin(t * 0.13 + 1.7) * Math.sin(t * 0.071 + 0.6);
+    const swayAmp = 0.6 + 0.8 * gust + 1.2 * E;
+    const breath = 0.94 + 0.06 * Math.sin(t * 0.23);
+    const slosh = x => (1.5 + 1.2 * gust + 7 * E) * Math.sin(x * 0.045 - sloshPh);
+
+    /* background */
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const cw = cv.width / dpr, ch = cv.height / dpr;
+    const g = ctx.createRadialGradient(cw / 2, ch * 0.44, 10, cw / 2, ch / 2, Math.max(cw, ch) * 0.72);
+    g.addColorStop(0, '#0c120b'); g.addColorStop(1, '#060906');
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = g; ctx.fillRect(0, 0, cw, ch);
+    ctx.setTransform(k * dpr, 0, 0, k * dpr, ox * dpr, oy * dpr);
+
+    let curLayer = -1;
+    for (let i = 0; i < N; i++) {
+      const l = pL[i];
+      if (l === FL.LIQ && liqStride > 1 && (i % liqStride)) continue;
+      if (l !== curLayer) {
+        curLayer = l;
+        ctx.globalCompositeOperation = l === FL.LIQ ? 'source-over' : 'lighter';
+      }
+
+      let x = pX[i], y = pY[i];
+      let C = OLIVE, a = 0.8, b = 1, sz = 1.35;
+
+      switch (l) {
+        case FL.LIQ: {
+          C = pU[i] === 0 ? [84, 116, 62] : [64, 98, 58]; a = 0.36; sz = 1.25;
+          b = 0.72 + 0.28 * Math.sin(x * 0.02 + y * 0.015 - t * 1.1)
+                   + 0.15 * Math.sin(x * 0.05 - t * 2.3 + hA[i] * 6);
+          if (!reduced && y < 435) y += slosh(x) * c01((435 - y) / 52);   // surface follows the slosh
+          break;
+        }
+        case FL.SWIRL:
+          if (pAr[i] && !reduced) {
+            x = pAx[i] + pAr[i] * Math.cos(pU[i] + swirlPh);
+            y = pAy[i] + pAr[i] * Math.sin(pU[i] + swirlPh);
+          }
+          C = BRT; a = 0.95; sz = 1.7;
+          b = 0.72 + 0.28 * Math.sin(pU[i] * 2 - t * 1.8 + hA[i]); break;
+        case FL.BUBIN:
+          if (!reduced) y += 1.5 * Math.sin(t * 1.3 + hA[i] * 9);
+          C = mixC(OLIVE, BRT, hA[i]); a = 0.85; sz = 1.3;
+          b = 0.7 + 0.3 * Math.sin(hA[i] * 11 + t * 2.2); break;
+        case FL.MEN:
+          if (!reduced) y += slosh(x);
+          C = PALE; a = 0.75; sz = 1.35;
+          b = 0.7 + 0.3 * Math.sin(x * 0.05 - t * 2.6); break;
+        case FL.INNER:
+          C = OLIVE; a = 0.6; sz = 1.25; b = 0.85 + 0.15 * Math.sin(hA[i] * 8 + t * 1.2); break;
+        case FL.OUT:
+          C = [124, 158, 74]; a = 0.95; sz = 1.8;
+          b = 0.8 + 0.2 * Math.sin(x * 0.012 + y * 0.01 + t * 1.4 + hA[i] * 6); break;
+        case FL.STEM: {
+          if (!reduced) {
+            const d = pD[i], bp = pB[i];
+            x += (d * d * 22 * Math.sin(t * 0.85 + bp * 6.28) + d * 6 * Math.sin(t * 1.9 + bp * 12)) * swayAmp;
+            y += d * 5 * Math.sin(t * 1.15 + bp * 9) * 0.5 * swayAmp;
+          }
+          C = OLIVE; a = 0.9; sz = 1.6;
+          b = 0.8 + 0.2 * Math.sin(hA[i] * 9 + t * 1.6);
+          const span = uStemMax + 500;
+          const tr1 = sapPh % span - 150, tr2 = (sapPh + span / 2) % span - 150;
+          const d1 = pU[i] - tr1, d2 = pU[i] - tr2;
+          b += (1.6 + 1.4 * E) * Math.exp(-d1 * d1 * 4e-4) + 1.0 * Math.exp(-d2 * d2 * 4e-4);
+          break;
+        }
+        case FL.LEAF: {
+          if (!reduced) {
+            const d = pD[i], bp = pB[i];
+            x += (d * d * 22 * Math.sin(t * 0.85 + bp * 6.28) + d * 6 * Math.sin(t * 1.9 + bp * 12)) * swayAmp;
+            y += d * 5 * Math.sin(t * 1.15 + bp * 9) * 0.5 * swayAmp;
+          }
+          C = pU[i] === 0 ? BRT : pU[i] === 1 ? OLIVE : MIDG;
+          a = pU[i] === 2 ? 0.35 : pU[i] === 1 ? 0.7 : 0.9;
+          sz = pU[i] === 0 ? 1.5 : 1.2;
+          b = 0.78 + 0.22 * Math.sin(pB[i] * 9 + hA[i] * 5 + t * 1.5);
+          const gp = fract(t / 9 + pB[i] * 1.31);                 // satin glint sweeping the leaf
+          if (gp < 0.12) b += 1.1 * Math.sin(Math.PI * gp / 0.12) * (0.5 + 0.5 * Math.sin(hA[i] * 6 + gp * 40));
+          break;
+        }
+        case FL.TBUB: {
+          if (pB[i] < 0.15) {                                      // mother bubble: bob, breathe, iris turns
+            if (!reduced) {
+              const wob = 3.5 * Math.sin(t * 1.1 + 0.8);
+              if (pAr[i]) {
+                const rr = pAr[i] * (1 + 0.05 * Math.sin(t * 0.9));
+                x = pAx[i] + rr * Math.cos(pU[i] + t * 0.18);
+                y = pAy[i] + rr * Math.sin(pU[i] + t * 0.18) + wob;
+              } else y += wob;
+            }
+            C = mixC(BRT, HOTG, 0.35); a = 0.95; sz = 1.6;
+            b = 0.7 + 0.3 * Math.sin(hA[i] * 11 + t * 2.6);
+          } else {                                                 // small bubbles: rise, fade, respawn
+            let env = 1;
+            if (!reduced) {
+              const q = fract(t * 0.066 + pB[i] * 1.9);
+              y -= q * 74; x += 4 * Math.sin(t * 0.9 + pB[i] * 12 + q * 5);
+              env = Math.pow(Math.sin(Math.PI * q), 0.7);
+            }
+            C = mixC(BRT, HOTG, 0.3); a = 0.95 * env; sz = 1.55;
+            b = 0.7 + 0.3 * Math.sin(hA[i] * 11 + t * 2.6);
+          }
+          break;
+        }
+      }
+
+      const A = c01(a * b) * breath;
+      if (A <= 0.012) continue;
+      ctx.fillStyle = 'rgba(' + (C[0] | 0) + ',' + (C[1] | 0) + ',' + (C[2] | 0) + ',' + A.toFixed(3) + ')';
+
+      if (!reduced && tAbs < 2.4) {                                // assemble from scatter
+        const mi = sm(c01((tAbs - hA[i] * 1.05) / 1.2));
+        x = mix(sX[i], x, mi); y = mix(sY[i], y, mi);
+        const arc = Math.sin(Math.PI * mi);
+        x += arc * 28 * (hA[i] - 0.5); y += arc * 28 * (F.hash(i * 9.1) - 0.5);
+        ctx.fillStyle = 'rgba(' + (C[0] | 0) + ',' + (C[1] | 0) + ',' + (C[2] | 0) + ',' + (A * mi).toFixed(3) + ')';
+        if (A * mi <= 0.012) continue;
+      }
+      ctx.fillRect(x - sz / 2, y - sz / 2, sz, sz);
+      if (A > 0.42 && curLayer !== FL.LIQ) {
+        ctx.fillStyle = 'rgba(' + (C[0] | 0) + ',' + (C[1] | 0) + ',' + (C[2] | 0) + ',' + (A * 0.15).toFixed(3) + ')';
+        const hs = sz * 2.6;
+        ctx.fillRect(x - hs / 2, y - hs / 2, hs, hs);
+      }
+    }
+
+    if (!reduced && tAbs >= 1.6) {
+      ctx.globalCompositeOperation = 'lighter';
+
+      /* bubbles: born in the swirl, rise, pop at the meniscus or escape the neck */
+      const NB = 16 + (E > 0.12 ? 8 : 0);
+      for (let bq = 0; bq < NB; bq++) {
+        const burst = bq >= 16;
+        const h1 = F.hash(bq * 7.7), h2 = F.hash(bq * 3.1 + 5);
+        const cyc = burst ? 2.6 : 4.5 + 3 * h1;
+        const q = fract(t / cyc + h2 * (burst ? 0.37 : 1));
+        const escapes = !burst && bq % 3 === 0;
+        const yTop = escapes ? 96 : 392;
+        let yy = 812 - q * (812 - yTop);
+        let xx = 470 + h1 * 240 + 12 * Math.sin(t * 1.4 + bq * 2.4 + q * 6);
+        if (yy < 500) xx = mix(xx, Math.min(640, Math.max(540, xx)), sm(c01((500 - yy) / 60)));
+        const rr = (burst ? 2.5 : 3 + 4 * h2) * (escapes && yy < 380 ? 1.25 : 1);
+        let A2 = (burst ? Math.min(1, E * 2.5) * 0.8 : 0.7) * Math.sin(Math.PI * Math.min(q * 8, 1) * 0.5 + 0);
+        if (escapes) A2 *= c01((yy - 96) / 90) * 0.9 + 0.1;
+        else if (q > 0.93) {                                       // pop flash at the surface
+          const pq = (q - 0.93) / 0.07;
+          const pr = rr + pq * 9;
+          const PA = (1 - pq) * 0.85;
+          ctx.fillStyle = 'rgba(214,227,154,' + PA.toFixed(3) + ')';
+          for (let j = 0; j < 10; j++) {
+            const a2 = (j / 10) * TAU;
+            ctx.fillRect(xx + pr * Math.cos(a2) - 0.8, 392 + slosh(xx) + pr * Math.sin(a2) - 0.8, 1.6, 1.6);
+          }
+          continue;
+        }
+        ctx.fillStyle = 'rgba(190,216,110,' + c01(A2).toFixed(3) + ')';
+        const nseg = Math.max(8, Math.round(rr * 2.4));
+        for (let j = 0; j < nseg; j++) {
+          const a2 = (j / nseg) * TAU;
+          ctx.fillRect(xx + rr * Math.cos(a2) - 0.7, yy + rr * Math.sin(a2) - 0.7, 1.4, 1.4);
+        }
+      }
+
+      /* spores drifting up off the leaves */
+      for (let sq = 0; sq < 84; sq++) {
+        const h1 = F.hash(sq * 5.3), h2 = F.hash(sq * 9.1 + 3);
+        const [bx, by] = LEAVES[sq % LEAVES.length];
+        const q = fract(t * (0.028 + 0.03 * h1) + h2);
+        const xx = bx + (h1 - 0.5) * 90 + 26 * Math.sin(t * 0.4 + h2 * 9);
+        const yy = by - 20 - q * 130;
+        const A2 = 0.26 * Math.sin(Math.PI * q) * (0.5 + 0.5 * Math.sin(t * 2 + h1 * 12));
+        if (A2 <= 0.01) continue;
+        ctx.fillStyle = 'rgba(196,216,128,' + A2.toFixed(3) + ')';
+        ctx.fillRect(xx, yy, 1.2, 1.2);
+      }
+
+      /* condensation drip down the right shoulder of the glass */
+      const dq = fract(t / 11 + 0.3);
+      if (dq < 0.22) {
+        const p = Math.pow(dq / 0.22, 1.6);
+        const dx0 = 692, dy0 = 552, dx1 = 824, dy1 = 792;
+        const xx = dx0 + (dx1 - dx0) * p + 4, yy = dy0 + (dy1 - dy0) * p;
+        for (let j = 0; j < 4; j++) {
+          const tb = Math.max(0, p - j * 0.035);
+          const A2 = (j === 0 ? 0.9 : 0.35 - j * 0.08) * Math.sin(Math.PI * Math.min(dq / 0.22 * 3, 1) * 0.5 + 0.5);
+          ctx.fillStyle = 'rgba(214,227,154,' + c01(A2).toFixed(3) + ')';
+          ctx.fillRect(dx0 + (dx1 - dx0) * tb + 4 - 0.9, dy0 + (dy1 - dy0) * tb - 0.9, j === 0 ? 2.2 : 1.4, j === 0 ? 2.6 : 1.4);
+        }
+      }
+    }
+
+    if (!reduced && !once) {
+      const d2 = performance.now() / 1000 - now;
+      emaDt = emaDt * 0.94 + d2 * 1000 * 0.06;
+      if (++frames % 90 === 0) {
+        if (emaDt > 25 && liqStride < 3) liqStride++;
+        else if (emaDt < 14 && liqStride > 1) liqStride--;
+      }
+      requestAnimationFrame(() => frame());
+    }
+  }
+
+  function stir() { if (!reduced) E = Math.min(1.4, E + 1); }
+  function restart() { t0 = performance.now() / 1000; tPrev = 0; E = 0; if (reduced) frame(true); }
+  cv.addEventListener('pointerdown', stir);
+  document.getElementById('restartBtn').addEventListener('click', ev => { ev.stopPropagation(); restart(); });
+  window.addEventListener('keydown', ev => {
+    if (ev.key === 'r' || ev.key === 'R') restart();
+    if (ev.key === ' ') { ev.preventDefault(); stir(); }
+  });
+  window.addEventListener('resize', resize);
+
+  const capEl = document.getElementById('caption');
+  if (CFG.caption) { capEl.textContent = CFG.caption; capEl.hidden = false; }
+
+  resize();
+  if (reduced) frame(true); else requestAnimationFrame(() => frame());
+})();
+
+</script>
+</body>
+</html>
