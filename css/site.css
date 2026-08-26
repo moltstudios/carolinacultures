@@ -319,10 +319,25 @@ footer.site .legal {
 /* ---------- mobile rhythm pass (390–720px) ---------- */
 @media (max-width: 720px) {
   .wrap { padding: 0 20px; }
-  .nav { padding: 15px 0; gap: 14px; }
-  .nav .cta-mini { margin-left: auto; padding: 9px 14px; }
-  .hero-v4 .shell { min-height: 0; padding: 40px 0 48px; align-items: flex-start; }
-  .glass-card { padding: 26px 22px 24px; border-radius: 14px; }
+  .nav { padding: 15px 20px; gap: 10px; }
+  .nav .brand { font-size: 0.92rem; min-width: 0; }
+  .nav .brand .mark img { width: 44px; }
+  .nav .brand > span:last-child small { display: none; }
+  .nav .cta-mini { margin-left: auto; padding: 9px 11px; font-size: 0.82rem; flex-shrink: 0; }
+  .hero-v4 .shell { min-height: 0; padding: 26px 0 40px; align-items: flex-start; }
+  .hero-v4 .shell .wrap { padding: 0; }
+  .hero-v4 .glass-card {
+    width: 81%;
+    margin-left: auto; margin-right: 14px;
+    background: rgba(255, 255, 255, 0.62);
+    backdrop-filter: blur(12px) saturate(1.1); -webkit-backdrop-filter: blur(12px) saturate(1.1);
+    padding: 20px 18px 18px; border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.55);
+    box-shadow: 0 22px 48px rgba(10, 16, 12, 0.32);
+  }
+  .hero-v4 .glass-card h1 { font-size: clamp(1.45rem, 5.6vw, 1.7rem); }
+  .hero-v4 .glass-card .sub { font-size: 0.94rem; margin: 10px 0 16px; }
+  .hero-v4 .glass-card .kicker { font-size: 0.66rem; margin-bottom: 10px; }
   .glass-card .btn-row { display: grid; grid-template-columns: 1fr; gap: 14px; }
   .glass-card .btn-row .btn { justify-content: center; }
   .glass-card .hero-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 18px 14px; margin-top: 24px; padding-top: 20px; }
@@ -355,4 +370,28 @@ footer.site .legal {
 @media (prefers-reduced-motion: reduce) {
   .brand .mark .mk-anim { display: none; }
   .brand .mark .mk-static { display: block; }
+}
+
+/* ---------- mobile section links (Varieties / Wholesale / The Lab) ---------- */
+.m-links { display: none; }
+@media (max-width: 720px) {
+  .m-links {
+    display: flex; justify-content: space-around; gap: 6px;
+    padding: 9px 18px 11px; border-bottom: 1px solid var(--line);
+    background: rgba(252, 252, 250, 0.94);
+  }
+  .m-links a {
+    font-size: 0.85rem; font-weight: 600; color: var(--dim);
+    padding: 6px 12px; border-radius: 8px; letter-spacing: 0.02em;
+  }
+  .m-links a[aria-current] { color: var(--green); background: #edf2e7; }
+}
+
+@media (max-width: 380px) {
+  .nav .brand .mark img { width: 40px; }
+  .nav .brand { font-size: 0.86rem; }
+  .nav .cta-mini { padding: 8px 9px; font-size: 0.78rem; }
+}
+@media (max-width: 340px) {
+  .nav .brand > span:last-child { display: none; }  /* logo-only header on SE-class widths */
 }
