@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Dial callerId="+13369101313" timeout="25">
+    +13363400416
+  </Dial>
+  <Say voice="alice">You have reached Carolina Cultures Company. Please leave a message after the tone, or email us at info at carolina cultures dot co.</Say>
+  <Record maxLength="120" transcribe="true" transcribeCallback="https://carolinacultures.co/twiml/transcribe-note.xml"/>
+</Response>
