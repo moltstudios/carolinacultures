@@ -48,7 +48,12 @@
     </div>
 
     <div style="display:grid; grid-template-columns:1.2fr 0.8fr; gap:clamp(28px,4vw,56px); align-items:start" class="lab-grid">
-      <form class="inquiry" action="mailto:orders@carolinacultures.co" method="post" enctype="text/plain">
+      <form class="inquiry" action="https://formsubmit.co/orders@carolinacultures.co" method="POST">
+        <input type="hidden" name="_subject" value="New wholesale inquiry — carolinacultures.co">
+        <input type="hidden" name="_template" value="table">
+        <input type="hidden" name="_captcha" value="false">
+        <input type="hidden" name="_next" value="https://carolinacultures.co/contact.html?sent=1">
+        <input type="text" name="_honey" style="display:none" tabindex="-1" autocomplete="off">
         <div class="f-row">
           <div><label for="f-name">Name *</label><input id="f-name" name="name" required></div>
           <div><label for="f-biz">Farm / Business</label><input id="f-biz" name="business"></div>
@@ -61,6 +66,7 @@
           <div><label for="f-var">Variety</label>
             <select id="f-var" name="variety">
               <option>Ouachita</option>
+              <option>Triple Crown</option>
               <option>Multiple / other (note below)</option>
             </select>
           </div>
@@ -69,7 +75,9 @@
         <div><label for="f-date">Target ship / plant date</label><input id="f-date" name="shipby" placeholder="e.g. mid-March 2027"></div>
         <div><label for="f-note">Notes</label><textarea id="f-note" name="notes" placeholder="Replant schedule, other cultivars, questions…"></textarea></div>
         <div><button class="btn btn-primary" type="submit">Send Inquiry</button></div>
+        <p id="sent-ok" style="display:none; margin-top:12px; padding:12px 16px; border:1px solid var(--green); border-radius:var(--radius); color:var(--ink); background:#f0f7ea"><b>Sent ✓</b> Your inquiry is in the orders desk queue — written response within one business day.</p>
       </form>
+      <script>if(new URLSearchParams(location.search).get('sent')==='1'){document.getElementById('sent-ok').style.display='block';document.querySelector('.inquiry').scrollIntoView({behavior:'smooth',block:'center'})}</script>
 
       <div>
         <div class="feat" style="margin-bottom:16px">
